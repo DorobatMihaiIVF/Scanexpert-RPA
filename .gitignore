@@ -1,0 +1,35 @@
+# UiPath Studio local state
+.local/
+.tmh/
+.screenshots/
+
+# REFramework exception screenshots (contain patient data)
+Exceptions_Screenshots/
+
+# UiPath packages
+*.nupkg
+
+# .NET
+bin/
+obj/
+TestResults/
+*.user
+
+# Go build output
+tools/queue-client/queue-client
+tools/queue-client/bin/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Worktrees and logs
+.worktrees/
+*.log
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

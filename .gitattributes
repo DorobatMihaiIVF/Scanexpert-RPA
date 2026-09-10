@@ -1,0 +1,8 @@
+* text=auto
+
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.nupkg binary
