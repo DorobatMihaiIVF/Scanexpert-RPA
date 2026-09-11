@@ -87,7 +87,8 @@ the envelope is built here. The reference is create-<AppointmentId>.
 Exit codes:
   0  done (an item already queued under the same reference counts as done)
   1  Orchestrator answered with an error, or the network failed
-  2  configuration, arguments or the input file are wrong
+  2  configuration, arguments or the input file are wrong - including a queue or a
+     folder Orchestrator itself refused, where the message names the variable to fix
   3  no queue item carries that reference (status only)
 
 Configuration: the seven UIPATH_* environment variables, all required, no defaults.
@@ -134,7 +135,7 @@ func enqueue(args []string, stdout, stderr io.Writer) int {
 			return exitOK
 		}
 		reportError(stderr, "enqueue", err, *debug)
-		return exitAPI
+		return apiExit(err)
 	}
 	fmt.Fprintf(stdout, "Id: %d\n", item.ID)
 	fmt.Fprintf(stdout, "Reference: %s\n", orchestrator.CleanText(reference))
@@ -177,23 +178,39 @@ func status(args []string, stdout, stderr io.Writer) int {
 			return exitNotFound
 		}
 		reportError(stderr, "status", err, *debug)
-		return exitAPI
+		return apiExit(err)
 	}
 	printItem(stdout, item)
 	return exitOK
 }
 
-// reportError prints err, and the server's own answer only when the operator asked for
-// it: an Orchestrator error quotes the queue item back, patient data included.
+// reportError prints err and, when Orchestrator's own error code named the cause, this
+// client's hint about which setting to look at. The server's answer is printed only when
+// the operator asked for it: an Orchestrator error quotes the queue item back, patient
+// data included. The hint is not part of that — it is a constant from the orchestrator
+// package and carries no byte the server sent, so it is safe without -debug.
 func reportError(stderr io.Writer, command string, err error, debug bool) {
 	fmt.Fprintf(stderr, "%s: %v\n", command, err)
-	if !debug {
+	var apiErr *orchestrator.APIError
+	if !errors.As(err, &apiErr) {
 		return
 	}
-	var apiErr *orchestrator.APIError
-	if errors.As(err, &apiErr) && apiErr.Body != "" {
+	if apiErr.Hint != "" {
+		fmt.Fprintf(stderr, "%s: %s\n", command, apiErr.Hint)
+	}
+	if debug && apiErr.Body != "" {
 		fmt.Fprintf(stderr, "%s: response body: %s\n", command, apiErr.Body)
 	}
+}
+
+// apiExit is the exit code for a failed call. A failure Orchestrator blamed on how this
+// client is configured, or on how it built the request, is exit 2 beside every other
+// configuration error: retrying it unchanged cannot help, which is what exit 1 invites.
+func apiExit(err error) int {
+	if errors.Is(err, orchestrator.ErrConfiguration) {
+		return exitInput
+	}
+	return exitAPI
 }
 
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer) int {

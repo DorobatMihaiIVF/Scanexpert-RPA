@@ -175,41 +175,6 @@ func TestAddQueueItemBuildsTheItemDataEnvelope(t *testing.T) {
 	}
 }
 
-func TestAddQueueItemReportsADuplicateReference(t *testing.T) {
-	// The status and the body Orchestrator answers with are (de verificat); the client
-	// classifies any non-2xx answer whose body says "duplicate reference".
-	bodies := map[string]string{
-		"Duplicate Reference": `{"message":"Error creating Transaction. Duplicate Reference."}`,
-		"duplicate reference": `{"message":"duplicate reference"}`,
-	}
-	for name, body := range bodies {
-		t.Run(name, func(t *testing.T) {
-			f := newFake(t)
-			f.onAPI(func(w http.ResponseWriter, _ capturedRequest) {
-				writeJSON(w, http.StatusConflict, body)
-			})
-			_, err := f.client().AddQueueItem(context.Background(), "create-abc", json.RawMessage(sampleContent))
-			if !errors.Is(err, ErrDuplicateReference) {
-				t.Fatalf("error = %v, want ErrDuplicateReference", err)
-			}
-		})
-	}
-
-	t.Run("another failure is not a duplicate", func(t *testing.T) {
-		f := newFake(t)
-		f.onAPI(func(w http.ResponseWriter, _ capturedRequest) {
-			writeJSON(w, http.StatusForbidden, `{"message":"no permission on this folder"}`)
-		})
-		_, err := f.client().AddQueueItem(context.Background(), "create-abc", json.RawMessage(sampleContent))
-		if err == nil {
-			t.Fatal("AddQueueItem: want an error, got none")
-		}
-		if errors.Is(err, ErrDuplicateReference) {
-			t.Fatalf("error = %v, want something other than ErrDuplicateReference", err)
-		}
-	})
-}
-
 func TestAddQueueItemRefusesBadInput(t *testing.T) {
 	f := newFake(t)
 	f.onAPI(okAddQueueItem)

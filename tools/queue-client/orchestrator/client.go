@@ -34,14 +34,77 @@ const (
 	redacted = "[redacted]"
 )
 
+// Orchestrator's documented custom error codes, from
+// https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/response-codes
+//
+// Only codes whose documented meaning actually covers this client's two calls are here.
+// Two that read as if they would fit are deliberately absent, because the page scopes
+// each to an unrelated endpoint: 1017 ForbiddenOperation is package and library
+// DOWNLOAD only despite its general name, and 1102 OrganizationUnitNotEditable is one
+// user endpoint. Reusing either for a queue failure would be inventing a meaning the
+// documentation does not give.
+const (
+	// errorCodeItemNotFound: 1002 ItemNotFound, "a request to a resource that does not
+	// exist in the database ... returned for tenants, assets, jobs, host licenses,
+	// queues and queue items, processes, settings, and users". Queues are named, but so
+	// are six other things, which is why the hint names the setting rather than
+	// asserting the queue is the missing one.
+	errorCodeItemNotFound = 1002
+	// errorCodeDuplicateReference: 1016 DuplicateReference, "Error creating
+	// [ReferenceName]. Duplicate Reference."
+	errorCodeDuplicateReference = 1016
+	// errorCodeInvalidOrganizationUnit: 1100 InvalidOrganizationUnit, "trying to make
+	// calls using a user that is associated to a different organization unit than the
+	// one you are trying to access".
+	errorCodeInvalidOrganizationUnit = 1100
+	// errorCodeRequiredOrganizationUnit: 1101 RequiredOrganizationUnit, "thrown when
+	// making POST requests endpoint without including an organization unit as a
+	// parameter". This client always sends the folder header, so this code means the
+	// header did not arrive: a defect here, not a wrong setting.
+	errorCodeRequiredOrganizationUnit = 1101
+	// errorCodeTransactionReferenceRequired: 1850 TransactionReferenceRequired. The
+	// response-codes page gives the name with NO description; the message comes from
+	// https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/transactions-requests
+	// — "Error creating Transaction. Reference is required for Unique Reference
+	// Queues." This client always sends a Reference, so this too is a defect here.
+	errorCodeTransactionReferenceRequired = 1850
+)
+
+// duplicateReferenceText is the fallback signal, matched case-insensitively.
+const duplicateReferenceText = "duplicate reference"
+
+// The hints. Every one is written HERE, never taken from the answer, so printing one
+// cannot leak the queue item back. Each names the setting to look at, or says plainly
+// that the fault is this tool's.
+const (
+	hintItemNotFound = "check UIPATH_QUEUE_NAME: the queue must already exist in the folder named by UIPATH_FOLDER_PATH. " +
+		"Orchestrator returns this same code for several other missing resources, so it is not proof the queue is the missing one."
+	hintInvalidOrganizationUnit  = "check UIPATH_FOLDER_PATH: the application is associated with a different folder than the one this call asked for."
+	hintRequiredOrganizationUnit = "Orchestrator received no folder, although this client always sends one. " +
+		"That is a defect in queue-client rather than a setting you can change: report it."
+	hintTransactionReferenceRequired = "the queue wants a Reference and this request carried none, although this client always sends one. " +
+		"That is a defect in queue-client rather than a setting you can change: report it."
+	// hintForbidden answers a bare 403. See classifyAnswer: this one mapping is
+	// INFERRED, not documented.
+	hintForbidden = "Orchestrator refused the folder. Check UIPATH_FOLDER_PATH, and that the application has the " +
+		"Queues.View and Transactions.Create permissions in that folder."
+)
+
 var (
 	// ErrDuplicateReference means the queue already holds an item with this Reference
-	// ("Enforce unique references"). Orchestrator's exact status and body for it are
-	// (de verificat): any non-2xx AddQueueItem answer whose body contains
-	// "duplicate reference", case-insensitive, is classified as this error.
+	// ("Enforce unique references"). It is recognised from the documented error code
+	// 1016 DuplicateReference in the answer's body, with the body text as a fallback;
+	// the HTTP status is never the trigger and is still (de verificat). See
+	// classifyAnswer.
 	ErrDuplicateReference = errors.New("duplicate reference")
 	// ErrNotFound means no queue item carries the requested Reference.
 	ErrNotFound = errors.New("queue item not found")
+	// ErrConfiguration means Orchestrator refused the call over how this client is
+	// configured or how it built the request — the wrong queue, the wrong folder, no
+	// folder, no Reference — rather than over anything about the appointment. Retrying
+	// it unchanged cannot help, so the caller stops and points at the setting instead.
+	// The APIError carries the text to show in Hint.
+	ErrConfiguration = errors.New("orchestrator refused this configuration")
 )
 
 // APIError is a non-2xx answer from the identity server or Orchestrator.
@@ -54,6 +117,10 @@ type APIError struct {
 	// name, CNP and phone number. That is why Error() leaves it out: a caller that logs
 	// the error logs no patient data, and one that prints Body chose to.
 	Body string
+	// Hint is this client's OWN sentence about a recognised failure, naming the setting
+	// to look at. Unlike Body it is a constant from this file and never holds a byte the
+	// server sent, so it is safe to print and to log without -debug.
+	Hint string
 	kind error
 }
 
@@ -62,7 +129,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("orchestrator: %s: HTTP %d", e.Op, e.StatusCode)
 }
 
-// Unwrap lets errors.Is match ErrDuplicateReference.
+// Unwrap lets errors.Is match ErrDuplicateReference and ErrConfiguration.
 func (e *APIError) Unwrap() error { return e.kind }
 
 // transportError carries a redacted message and still unwraps to the cause, so a
@@ -273,13 +340,94 @@ func (c *Client) wrap(op string, err error, token string) error {
 func (c *Client) apiError(op string, status int, raw []byte, token string, readErr error) *APIError {
 	text := CleanText(c.redact(strings.TrimSpace(string(raw)), token))
 	e := &APIError{Op: op, StatusCode: status, Body: truncate(text, maxErrorBodyInMessage)}
-	if op == opAddQueueItem && strings.Contains(strings.ToLower(text), "duplicate reference") {
-		e.kind = ErrDuplicateReference
-	}
+	e.kind, e.Hint = classifyAnswer(op, status, raw, text)
 	if readErr != nil {
 		e.Body = strings.TrimSpace(e.Body + " ...(the answer stopped early and is incomplete)")
 	}
 	return e
+}
+
+// errorResponse is the part of an Orchestrator error answer the client reads. Only the
+// error code is taken from it; nothing here is kept or printed, so the rest of the
+// answer stays on APIError.Body, which -debug alone prints.
+//
+// THE FIELD NAME IS OBSERVED, NOT DOCUMENTED. The response-codes page documents the
+// CODES and their meanings, but it documents no error body at all: it shows no JSON
+// example and never names an "errorCode" field. So the codes below are a contract and
+// this envelope is not (de verificat) — which is why classifyAnswer keeps a fallback
+// that works when the field is absent, and why nothing here is fatal when it is.
+type errorResponse struct {
+	ErrorCode json.Number `json:"errorCode"`
+}
+
+// errorCodeOf reads Orchestrator's custom error code out of a failed answer. It reports
+// false when the answer is not JSON, or carries no code, or carries one that is not a
+// number — each of which leaves the caller on its fallback rather than on a guess.
+//
+// raw is the answer as it arrived, because the redacted, cleaned and truncated form is
+// not JSON any more.
+func errorCodeOf(raw []byte) (int64, bool) {
+	var answer errorResponse
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return 0, false
+	}
+	code, err := answer.ErrorCode.Int64()
+	if err != nil {
+		return 0, false
+	}
+	return code, true
+}
+
+// classifyAnswer says what a non-2xx answer means and what to tell the operator: the
+// error class the caller matches with errors.Is, and this client's own hint, "" when
+// there is nothing useful to add.
+//
+// THE ERROR CODE IS THE SIGNAL, NOT THE HTTP STATUS. The status Orchestrator answers
+// each of these with is not documented (de verificat), so keying on one would both
+// misread unrelated failures carrying that status and miss the real thing answered with
+// another. An answer that names its code is believed: a recognised code decides, and an
+// unrecognised one is another failure whatever its message says.
+//
+// Two fallbacks run only when no code was readable, and both are marked where they are:
+// the duplicate text match, and the bare 403.
+func classifyAnswer(op string, status int, raw []byte, text string) (error, string) {
+	if code, ok := errorCodeOf(raw); ok {
+		switch code {
+		case errorCodeDuplicateReference:
+			// Guarded by operation: this envelope is Orchestrator's, and a read
+			// answering 1016 is not a duplicate enqueue.
+			if op == opAddQueueItem {
+				return ErrDuplicateReference, ""
+			}
+		case errorCodeItemNotFound:
+			return ErrConfiguration, hintItemNotFound
+		case errorCodeInvalidOrganizationUnit:
+			return ErrConfiguration, hintInvalidOrganizationUnit
+		case errorCodeRequiredOrganizationUnit:
+			return ErrConfiguration, hintRequiredOrganizationUnit
+		case errorCodeTransactionReferenceRequired:
+			return ErrConfiguration, hintTransactionReferenceRequired
+		}
+		// A recognised code that did not match, or one this client does not know: fall
+		// through, so a 403 carrying it still reaches the mapping below.
+	} else if op == opAddQueueItem && strings.Contains(strings.ToLower(text), duplicateReferenceText) {
+		// No code to read, so the message is all there is. Without this a missing field
+		// would turn a duplicate into a hard failure and report an enqueue as broken
+		// while the appointment is already in the queue.
+		return ErrDuplicateReference, ""
+	}
+
+	// INFERRED, NOT DOCUMENTED: no official page maps a status to this endpoint's
+	// permission failure, and there is no documented code at all for "the caller lacks
+	// Queues.View or Transactions.Create in this folder". A 403 that named no code we
+	// know is therefore read as a refused folder — the one status-based mapping here,
+	// and it is a hint plus an exit code, never a claim about which code Orchestrator
+	// meant. The docs also do not say whether a wrong folder answers not-found or
+	// not-authorised, so nothing below branches as if they did.
+	if status == http.StatusForbidden {
+		return ErrConfiguration, hintForbidden
+	}
+	return nil, ""
 }
 
 func (c *Client) redact(s, token string) string {

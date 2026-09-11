@@ -132,6 +132,66 @@ func TestReportErrorPrintsTheBodyOnlyWithDebug(t *testing.T) {
 	})
 }
 
+// The hint names the setting to fix, so withholding it until -debug would hide the one
+// line that ends the problem. It is safe to print because the orchestrator package writes
+// it, unlike Body, which is the server's own bytes.
+func TestReportErrorPrintsTheHintWithoutDebug(t *testing.T) {
+	const patient = "POPESCU ION 1850412170013"
+	err := &orchestrator.APIError{
+		Op:         "AddQueueItem",
+		StatusCode: http.StatusForbidden,
+		Body:       "denied for " + patient,
+		Hint:       "check UIPATH_FOLDER_PATH and the Queues.View permission there.",
+	}
+
+	var quiet bytes.Buffer
+	reportError(&quiet, "enqueue", err, false)
+	if !strings.Contains(quiet.String(), "UIPATH_FOLDER_PATH") {
+		t.Errorf("output = %q, want the hint without -debug", quiet.String())
+	}
+	if strings.Contains(quiet.String(), patient) {
+		t.Errorf("the default output carries the answer's text: %q", quiet.String())
+	}
+
+	t.Run("no hint, no extra line", func(t *testing.T) {
+		var out bytes.Buffer
+		reportError(&out, "enqueue", &orchestrator.APIError{Op: "AddQueueItem", StatusCode: 500}, false)
+		if strings.Count(out.String(), "\n") != 1 {
+			t.Errorf("output = %q, want one line when there is no hint", out.String())
+		}
+	})
+}
+
+// A failure Orchestrator blamed on the configuration is the operator's to fix, so it
+// joins every other configuration error at exit 2 rather than sitting at exit 1, where
+// it reads as something a retry might clear.
+func TestApiExitSeparatesConfigurationFromEverythingElse(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want int
+	}{
+		"a configuration failure": {
+			err:  fmt.Errorf("enqueue: %w", orchestrator.ErrConfiguration),
+			want: exitInput,
+		},
+		"another API failure": {
+			err:  &orchestrator.APIError{Op: "AddQueueItem", StatusCode: http.StatusInternalServerError},
+			want: exitAPI,
+		},
+		"the network failed": {
+			err:  fmt.Errorf("the network is down"),
+			want: exitAPI,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := apiExit(c.err); got != c.want {
+				t.Errorf("apiExit = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 func TestReadInput(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {
