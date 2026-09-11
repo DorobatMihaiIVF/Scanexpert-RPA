@@ -47,26 +47,47 @@ const (
 	maxConnsPerHost = 16
 )
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+// cli is everything a command needs from outside the process: where the seven UIPATH_*
+// variables come from, where output goes, and the HTTP client that reaches Orchestrator.
+// main fills it with the real ones, so nothing an operator sees changes; a test fills it
+// with its own, which is what makes the exit codes docs/06 section 9 promises gradable
+// end to end rather than one layer at a time.
+//
+// The HTTP client is here for that reason and no other: a test server speaks TLS with its
+// own certificate, which the default transport rightly refuses. It is not a way to
+// reconfigure the real client — main passes newHTTPClient() and always has.
+type cli struct {
+	lookupEnv  func(string) (string, bool)
+	stdout     io.Writer
+	stderr     io.Writer
+	httpClient *http.Client
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func main() {
+	os.Exit(run(os.Args[1:], cli{
+		lookupEnv:  os.LookupEnv,
+		stdout:     os.Stdout,
+		stderr:     os.Stderr,
+		httpClient: newHTTPClient(),
+	}))
+}
+
+func run(args []string, c cli) int {
 	if len(args) == 0 {
-		usage(stderr)
+		usage(c.stderr)
 		return exitInput
 	}
 	switch args[0] {
 	case "enqueue":
-		return enqueue(args[1:], stdout, stderr)
+		return enqueue(args[1:], c)
 	case "status":
-		return status(args[1:], stdout, stderr)
+		return status(args[1:], c)
 	case "help", "-h", "-help", "--help":
-		usage(stdout)
+		usage(c.stdout)
 		return exitOK
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
-		usage(stderr)
+		fmt.Fprintf(c.stderr, "unknown command %q\n\n", args[0])
+		usage(c.stderr)
 		return exitInput
 	}
 }
@@ -96,30 +117,30 @@ See .env.example and docs/06-setup-orchestrator.md section 11.
 `)
 }
 
-func enqueue(args []string, stdout, stderr io.Writer) int {
+func enqueue(args []string, c cli) int {
 	fs := flag.NewFlagSet("enqueue", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(c.stderr)
 	file := fs.String("file", "", "path to the JSON file holding the flat SpecificContent object")
 	debug := fs.Bool("debug", false, "also print the body of an Orchestrator error (it can carry patient data)")
-	if code := parse(fs, args, stderr); code != exitOK {
+	if code := parse(fs, args, c.stderr); code != exitOK {
 		return code
 	}
 	if *file == "" {
-		fmt.Fprintln(stderr, "enqueue: -file is required")
+		fmt.Fprintln(c.stderr, "enqueue: -file is required")
 		return exitInput
 	}
 	data, err := readInput(*file)
 	if err != nil {
-		fmt.Fprintf(stderr, "enqueue: %v\n", err)
+		fmt.Fprintf(c.stderr, "enqueue: %v\n", err)
 		return exitInput
 	}
 	reference, content, err := orchestrator.PrepareAppointmentItem(data)
 	if err != nil {
-		fmt.Fprintf(stderr, "enqueue: %s: %v\n", *file, err)
+		fmt.Fprintf(c.stderr, "enqueue: %s: %v\n", *file, err)
 		return exitInput
 	}
 
-	client, code := newClient(stderr)
+	client, code := newClient(c)
 	if client == nil {
 		return code
 	}
@@ -131,40 +152,40 @@ func enqueue(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, orchestrator.ErrDuplicateReference) {
 			// The queue enforces unique references, so this reference is already in
 			// it and no second item is wanted: the caller got what it asked for.
-			fmt.Fprintf(stdout, "already queued: %s\n", orchestrator.CleanText(reference))
+			fmt.Fprintf(c.stdout, "already queued: %s\n", orchestrator.CleanText(reference))
 			return exitOK
 		}
-		reportError(stderr, "enqueue", err, *debug)
+		reportError(c.stderr, "enqueue", err, *debug)
 		return apiExit(err)
 	}
-	fmt.Fprintf(stdout, "Id: %d\n", item.ID)
-	fmt.Fprintf(stdout, "Reference: %s\n", orchestrator.CleanText(reference))
+	fmt.Fprintf(c.stdout, "Id: %d\n", item.ID)
+	fmt.Fprintf(c.stdout, "Reference: %s\n", orchestrator.CleanText(reference))
 	if item.Status != "" {
-		fmt.Fprintf(stdout, "Status: %s\n", orchestrator.CleanText(item.Status))
+		fmt.Fprintf(c.stdout, "Status: %s\n", orchestrator.CleanText(item.Status))
 	}
 	return exitOK
 }
 
-func status(args []string, stdout, stderr io.Writer) int {
+func status(args []string, c cli) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(c.stderr)
 	reference := fs.String("reference", "", "queue item reference, create-<AppointmentId>")
 	debug := fs.Bool("debug", false, "also print the body of an Orchestrator error (it can carry patient data)")
-	if code := parse(fs, args, stderr); code != exitOK {
+	if code := parse(fs, args, c.stderr); code != exitOK {
 		return code
 	}
 	if *reference == "" {
-		fmt.Fprintln(stderr, "status: -reference is required")
+		fmt.Fprintln(c.stderr, "status: -reference is required")
 		return exitInput
 	}
 	// A reference Orchestrator cannot carry is the operator's mistake, so it is exit 2
 	// here rather than a request that can only come back empty.
 	if err := orchestrator.ValidateReference(*reference); err != nil {
-		fmt.Fprintf(stderr, "status: %v\n", err)
+		fmt.Fprintf(c.stderr, "status: %v\n", err)
 		return exitInput
 	}
 
-	client, code := newClient(stderr)
+	client, code := newClient(c)
 	if client == nil {
 		return code
 	}
@@ -174,13 +195,13 @@ func status(args []string, stdout, stderr io.Writer) int {
 	item, err := client.LatestQueueItemByReference(ctx, *reference)
 	if err != nil {
 		if errors.Is(err, orchestrator.ErrNotFound) {
-			fmt.Fprintf(stderr, "status: no queue item carries the reference %s\n", orchestrator.CleanText(*reference))
+			fmt.Fprintf(c.stderr, "status: no queue item carries the reference %s\n", orchestrator.CleanText(*reference))
 			return exitNotFound
 		}
-		reportError(stderr, "status", err, *debug)
+		reportError(c.stderr, "status", err, *debug)
 		return apiExit(err)
 	}
-	printItem(stdout, item)
+	printItem(c.stdout, item)
 	return exitOK
 }
 
@@ -225,15 +246,15 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer) int {
 	return exitOK
 }
 
-func newClient(stderr io.Writer) (*orchestrator.Client, int) {
-	cfg, err := orchestrator.LoadConfig(os.LookupEnv)
+func newClient(c cli) (*orchestrator.Client, int) {
+	cfg, err := orchestrator.LoadConfig(c.lookupEnv)
 	if err != nil {
-		fmt.Fprintf(stderr, "configuration: %v\n", err)
+		fmt.Fprintf(c.stderr, "configuration: %v\n", err)
 		return nil, exitInput
 	}
-	client, err := orchestrator.NewClient(cfg, newHTTPClient())
+	client, err := orchestrator.NewClient(cfg, c.httpClient)
 	if err != nil {
-		fmt.Fprintf(stderr, "configuration: %v\n", err)
+		fmt.Fprintf(c.stderr, "configuration: %v\n", err)
 		return nil, exitInput
 	}
 	return client, exitOK

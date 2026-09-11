@@ -278,7 +278,7 @@ func TestRunRejectsBadArguments(t *testing.T) {
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			if code := run(args, &stdout, &stderr); code != exitInput {
+			if code := run(args, cli{stdout: &stdout, stderr: &stderr}); code != exitInput {
 				t.Errorf("run(%q) = %d, want %d", args, code, exitInput)
 			}
 			if stderr.Len() == 0 {
@@ -290,7 +290,7 @@ func TestRunRejectsBadArguments(t *testing.T) {
 
 func TestRunHelpSucceeds(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"help"}, &stdout, &stderr); code != exitOK {
+	if code := run([]string{"help"}, cli{stdout: &stdout, stderr: &stderr}); code != exitOK {
 		t.Errorf("run(help) = %d, want %d", code, exitOK)
 	}
 	if !strings.Contains(stdout.String(), "-debug") {
