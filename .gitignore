@@ -18,6 +18,7 @@ TestResults/
 # Go build output
 tools/queue-client/queue-client
 tools/queue-client/bin/
+/queue-client
 
 # Secrets
 .env

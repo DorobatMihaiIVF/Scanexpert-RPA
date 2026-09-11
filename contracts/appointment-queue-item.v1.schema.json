@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Item coadă PixelData_Programari, contract v1 (SpecificContent)",
+  "description": "Obiectul SpecificContent al unui item din coada PixelData_Programari. Chei plate, fără obiecte imbricate. Toate cheile din contract sunt mereu prezente; string gol \"\" înseamnă necunoscut. Cheile necunoscute sunt permise și se ignoră (compatibilitate cu versiuni viitoare). Sursa de adevăr: docs/sources/decizii-design-v1.md.",
+  "type": "object",
+  "required": [
+    "SchemaVersion",
+    "Operation",
+    "AppointmentId",
+    "CreatedAt",
+    "Source",
+    "ScheduledAt",
+    "ScheduledLocalDate",
+    "ScheduledLocalTime",
+    "DurationMinutes",
+    "BranchId",
+    "BranchName",
+    "Modality",
+    "ProductId",
+    "ProductCode",
+    "ProductName",
+    "Laterality",
+    "Payer",
+    "Insurer",
+    "ReferralDate",
+    "ReferralPending",
+    "ReferralNumber",
+    "ReferringDoctorName",
+    "ReferringDoctorClinic",
+    "ReferringDoctorParafa",
+    "PatientId",
+    "PatientFullName",
+    "PatientLastName",
+    "PatientFirstName",
+    "PatientCnp",
+    "PatientPhone",
+    "PatientBirthDate",
+    "PatientSex",
+    "Notes"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "SchemaVersion": {
+      "description": "Versiunea contractului. Mereu \"1\" în v1.",
+      "type": "string",
+      "const": "1"
+    },
+    "Operation": {
+      "description": "Operația cerută robotului. v1 are doar \"create\" (programare nouă).",
+      "type": "string",
+      "const": "create"
+    },
+    "AppointmentId": {
+      "description": "Identificatorul programării. Sursă: appointments.id. UUID cu litere mici; Reference = create-<AppointmentId>.",
+      "$ref": "#/$defs/uuid"
+    },
+    "CreatedAt": {
+      "description": "Momentul creării programării în recepție. Sursă: appointments.created_at. RFC3339 cu offset obligatoriu.",
+      "$ref": "#/$defs/dateTimeWithOffset"
+    },
+    "Source": {
+      "description": "Canalul programării. Sursă: appointments.source. NU este „Sursa pacient” din PixelData.",
+      "type": "string",
+      "enum": ["", "Centrala", "Aplicație", "La sediu"]
+    },
+    "ScheduledAt": {
+      "description": "Momentul programării. Sursă: appointments.scheduled_at. RFC3339 cu offset obligatoriu (Z este permis).",
+      "$ref": "#/$defs/dateTimeWithOffset"
+    },
+    "ScheduledLocalDate": {
+      "description": "Data programării în ora locală Europe/Bucharest, gata de tastat. Derivat din ScheduledAt. Consistența cu ScheduledAt nu poate fi verificată de schemă.",
+      "$ref": "#/$defs/date"
+    },
+    "ScheduledLocalTime": {
+      "description": "Ora programării în ora locală Europe/Bucharest, format HH:MM (24h), gata de tastat. Derivat din ScheduledAt.",
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "DurationMinutes": {
+      "description": "Durata investigației în minute. Sursă: products.duration_minutes. 0 = necunoscut.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "BranchId": {
+      "description": "Identificatorul sucursalei. Sursă: appointments.branch_id. UUID cu litere mici sau \"\".",
+      "$ref": "#/$defs/uuidOrEmpty"
+    },
+    "BranchName": {
+      "description": "Numele sucursalei, ex. „ScanExpert Galați”. Sursă: branches.name. Robotul îl cere pentru alegerea resursei PixelData.",
+      "type": "string"
+    },
+    "Modality": {
+      "description": "Modalitatea investigației, ex. RMN, CT, Ecografie. Sursă: products.modality.",
+      "type": "string"
+    },
+    "ProductId": {
+      "description": "Identificatorul produsului din catalog. Sursă: appointments.product_id. UUID cu litere mici sau \"\".",
+      "$ref": "#/$defs/uuidOrEmpty"
+    },
+    "ProductCode": {
+      "description": "Codul din catalog. Sursă: products.barcode. De confirmat că este „Cod” din PixelData.",
+      "type": "string"
+    },
+    "ProductName": {
+      "description": "Denumirea investigației. Sursă: appointments.kind / products.name. Obligatoriu ne-gol.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "Laterality": {
+      "description": "Lateralitatea. Sursă: appointments.laterality.",
+      "type": "string",
+      "enum": ["", "stanga", "dreapta", "bilateral"]
+    },
+    "Payer": {
+      "description": "Tipul de plată / recomandare. Sursă: appointments.payer. CAS și Monitor înseamnă Trimitere în PixelData.",
+      "type": "string",
+      "enum": ["", "CAS", "Monitor", "Contra cost", "Asigurator privat"]
+    },
+    "Insurer": {
+      "description": "Numele asigurătorului privat. Sursă: appointments.insurer. Obligatoriu ne-gol doar dacă Payer = \"Asigurator privat\".",
+      "type": "string"
+    },
+    "ReferralDate": {
+      "description": "„Data bilet” (data biletului de trimitere). Sursă: appointments.referral_date. YYYY-MM-DD sau \"\".",
+      "$ref": "#/$defs/dateOrEmpty"
+    },
+    "ReferralPending": {
+      "description": "Biletul de trimitere nu a sosit încă. Sursă: appointments.referral_due_at nenul. Mereu prezent.",
+      "type": "boolean"
+    },
+    "ReferralNumber": {
+      "description": "„Nr./Serie bilet”. Lipsește în recepție, deci \"\" în v1.",
+      "type": "string"
+    },
+    "ReferringDoctorName": {
+      "description": "„Medic trimițător”. Sursă: doctors.full_name.",
+      "type": "string"
+    },
+    "ReferringDoctorClinic": {
+      "description": "Clinica medicului trimițător. Sursă: doctors.clinic. Candidat pentru „Sursa pacient” din PixelData.",
+      "type": "string"
+    },
+    "ReferringDoctorParafa": {
+      "description": "Codul de parafă al medicului trimițător. Sursă: doctors.parafa.",
+      "type": "string"
+    },
+    "PatientId": {
+      "description": "Identificatorul pacientului în recepție. Sursă: customers.id. UUID cu litere mici.",
+      "$ref": "#/$defs/uuid"
+    },
+    "PatientFullName": {
+      "description": "Numele complet al pacientului. Sursă: customers.full_name. Obligatoriu ne-gol.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "PatientLastName": {
+      "description": "Numele de familie („Nume”). Derivat. \"\" înseamnă că robotul împarte PatientFullName.",
+      "type": "string"
+    },
+    "PatientFirstName": {
+      "description": "Prenumele („Prenume”). Derivat.",
+      "type": "string"
+    },
+    "PatientCnp": {
+      "description": "CNP-ul pacientului: 13 cifre sau \"\". Sursă: customers.cnp. Cifra de control o verifică robotul; implicit robotul cere CNP.",
+      "type": "string",
+      "pattern": "^$|^[0-9]{13}$"
+    },
+    "PatientPhone": {
+      "description": "Telefonul principal în format E.164 (+40...) sau \"\". Sursă: customer_phones (primar).",
+      "type": "string",
+      "pattern": "^$|^\\+[1-9][0-9]{7,14}$"
+    },
+    "PatientBirthDate": {
+      "description": "Data nașterii. Sursă: customers.birth_date. YYYY-MM-DD sau \"\".",
+      "$ref": "#/$defs/dateOrEmpty"
+    },
+    "PatientSex": {
+      "description": "Sexul pacientului. Sursă: customers.sex. Valori de verificat (în recepție CHECK-ul este '', 'M', 'F').",
+      "type": "string"
+    },
+    "Notes": {
+      "description": "„Observații”. Sursă: appointments.notes. Maximum 2000 de caractere.",
+      "type": "string",
+      "maxLength": 2000
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "Payer": { "const": "Asigurator privat" } },
+        "required": ["Payer"]
+      },
+      "then": {
+        "properties": { "Insurer": { "$ref": "#/$defs/nonEmptyString" } }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "description": "String cu cel puțin un caracter care nu este spațiu.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "uuid": {
+      "description": "UUID cu litere mici (8-4-4-4-12).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "uuidOrEmpty": {
+      "description": "UUID cu litere mici sau \"\".",
+      "type": "string",
+      "pattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "date": {
+      "description": "Dată YYYY-MM-DD. Schema verifică doar intervalele lunii și zilei; validitatea calendaristică o verifică robotul.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "dateOrEmpty": {
+      "description": "Dată YYYY-MM-DD sau \"\".",
+      "type": "string",
+      "pattern": "^$|^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    },
+    "dateTimeWithOffset": {
+      "description": "RFC3339 cu offset obligatoriu: YYYY-MM-DDTHH:MM:SS, fracțiune opțională de 1-9 cifre, apoi Z sau +HH:MM / -HH:MM. T și Z cu majuscule.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,9})?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$"
+    }
+  }
+}

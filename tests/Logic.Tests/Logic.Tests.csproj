@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>10</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>PixelDataProgramari.Logic.Tests</RootNamespace>
+    <AssemblyName>PixelDataProgramari.Logic.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Logica robotului se compilează direct din robot/Logic (fără proiect separat). -->
+    <Compile Include="../../robot/Logic/**/*.cs" Exclude="../../robot/Logic/**/bin/**;../../robot/Logic/**/obj/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exemplele de contract ajung în bin/.../examples/{valid,invalid/schema,invalid/business}/. -->
+    <None Include="../../contracts/examples/**/*.json" LinkBase="examples" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Fișierul real de mapări ajunge în bin/.../data/pixeldata-mappings.json. -->
+    <None Include="../../robot/Data/pixeldata-mappings.json" Link="data/pixeldata-mappings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

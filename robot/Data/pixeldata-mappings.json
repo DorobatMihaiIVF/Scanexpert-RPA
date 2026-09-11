@@ -1,0 +1,27 @@
+{
+  "mappingsVersion": "1",
+  "initialStatus": "Programat",
+  "referralPayers": ["CAS", "Monitor"],
+  "resources": [
+    { "branchName": "ScanExpert Iași", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Iași II", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Galați", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Brașov", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Roman", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Pașcani", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "OptimDiagnostic Botoșani", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "OptimDiagnostic Botoșani II", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Timișoara", "modality": "*", "pixelDataResource": "TODO" },
+    { "branchName": "ScanExpert Timișoara II", "modality": "*", "pixelDataResource": "TODO" }
+  ],
+  "patientSource": {
+    "strategy": "referringDoctorClinic",
+    "fallback": "TODO",
+    "clinicAliases": [
+      { "clinic": "TODO", "pixelDataSource": "TODO" }
+    ]
+  },
+  "procedures": [
+    { "productCode": "TODO", "pixelDataProcedure": "TODO" }
+  ]
+}
