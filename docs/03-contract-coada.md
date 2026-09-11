@@ -45,7 +45,7 @@ Apelul complet (token, headere, folder): investigatie §4 „Declanșare din bac
 | Momente | `ScheduledAt`, `CreatedAt`: RFC3339 cu offset obligatoriu, `YYYY-MM-DDTHH:MM:SS`, fracțiune de secundă opțională (1–9 cifre), apoi `Z` sau `+HH:MM` / `-HH:MM`; `T` și `Z` cu majuscule; ex. `2026-09-15T09:30:00+03:00` |
 | Dată și oră locală | `ScheduledLocalDate` `YYYY-MM-DD`, `ScheduledLocalTime` `HH:MM` (00:00–23:59), în Europe/Bucharest, gata de tastat; schema nu verifică potrivirea cu `ScheduledAt` |
 | Date calendaristice | `ReferralDate`, `PatientBirthDate`: `YYYY-MM-DD` sau `""`; schema verifică doar intervalul lunii și al zilei, data reală o verifică robotul |
-| Dimensiune | `SpecificContent` ≤ ~256.000 caractere / 512.000 bytes (investigatie §4) |
+| Dimensiune | `SpecificContent` ≤ „256,000 characters or 512,000 bytes” ([about-queues-and-transactions](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions#schema-definitions)) |
 | Date de test | doar fictive, inclusiv CNP-urile |
 
 ## 3. Cheile `SpecificContent`
@@ -93,11 +93,11 @@ Apelul complet (token, headere, folder): investigatie §4 „Declanșare din bac
 | Regulă | Detaliu |
 |---|---|
 | Formă | `create-<AppointmentId>`, ex. `create-00000000-0000-4000-8000-000000000001` |
-| Limite | 43 caractere (≤ 128), fără apostrof (investigatie §4, sursă terță) |
-| Unicitate | coada are „Enforce unique references” = ON; al doilea item cu același `Reference` e respins („Duplicate Reference”, cod HTTP de verificat) |
+| Limite | al nostru are 43 de caractere. Limita de 128 și interdicția apostrofului sunt documentate pentru **expresia de filtrare**, nu pentru câmpul stocat ([get-queue-items](https://docs.uipath.com/activities/other/latest/workflow/get-queue-items)); o sursă de forum spune că și câmpul refuză peste 128 (de verificat) |
+| Unicitate | coada are „Enforce unique references” = ON; al doilea item cu același `Reference` e respins cu `errorCode` `1016 DuplicateReference` (cod HTTP nedocumentat oficial, de verificat). Verificarea „applies to all transactions except deleted or retried ones” ([about-queues-and-transactions](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions)), deci un item `Failed` ține `Reference`-ul ocupat |
 | Emitentul | tratează duplicatul ca „deja în coadă”, nu ca eroare |
 | Retry | clonele create de Auto retry păstrează `Reference`-ul; itemul actual e cel cu `Id` maxim |
-| Retrimitere după un eșec Business corectat | deschisă: [11](11-intrebari-deschise.md) U7, S8 |
+| Retrimitere după un eșec Business corectat | Edit pe Specific Data + marcare `Retried`, sau ștergerea itemului `Failed` și retrimiterea sub același `Reference`. `Reference` NU capătă niciodată sufix: e cheia de idempotență. Procedura: [05](05-integrare-receptie.md) §6, [06](06-setup-orchestrator.md) §10 |
 
 ## 5. Output la succes
 

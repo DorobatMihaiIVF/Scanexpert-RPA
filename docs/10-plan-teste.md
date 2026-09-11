@@ -131,7 +131,7 @@ Pași:
    | `PixelDataResource` | resursa de test |
    | `ProcessedAt` | data și ora procesării, RFC3339 |
 
-6. Idempotență la coadă: trimite din nou același item (același `AppointmentId`, deci același Reference `create-<AppointmentId>`). Orchestrator îl respinge („Duplicate Reference”; codul HTTP exact de verificat).
+6. Idempotență la coadă: trimite din nou același item (același `AppointmentId`, deci același Reference `create-<AppointmentId>`). Orchestrator îl respinge cu `errorCode` `1016 DuplicateReference` (codul HTTP exact de verificat). Respingerea are loc și dacă itemul precedent e `Failed`: doar itemii `Deleted` și `Retried` sunt exceptați de la verificarea unicității.
 7. Idempotență în robot: creează manual în PixelData o programare pentru pacientul de test pe un alt slot liber, apoi trimite un item nou (alt `AppointmentId`) cu același CNP, dată, oră și resursă. Așteptat: `Successful`, `Outcome` = `"already_existed"`, nicio programare dublă în PixelData.
 
 Curățenie după test:
@@ -145,6 +145,7 @@ Legendă status item (Orchestrator):
 - Excepție business: `Failed`, fără retry.
 - Excepție system (application): prima încercare devine `Retried` și Orchestrator creează un item nou cu același Reference; a doua încercare ajunge `Successful` sau `Failed` (coada are Auto retry, maximum 1).
 - `ProcessingException` începe cu codul, de exemplu `CNP_INVALID: <mesaj>`.
+- **Reluare după `Failed`** (procedura completă: [06-setup-orchestrator.md](06-setup-orchestrator.md) §10). Un item `Failed` ține în continuare Reference-ul ocupat, deci o simplă retrimitere primește `1016 DuplicateReference`. Două căi: (a) Edit pe Specific Data al itemului, apoi marcare `Retried` ⇒ item nou `New`; (b) ștergerea itemului `Failed`, apoi retrimiterea sub același Reference. Nu se folosește un Reference cu sufix.
 
 | Nr. | Scenariu | Cum se provoacă | Status item așteptat | Cod / observații |
 |---|---|---|---|---|
@@ -168,9 +169,11 @@ Legendă status item (Orchestrator):
 | E18 | PixelData deschis de un om în altă sesiune | un utilizator lasă PixelData deschis în sesiunea lui | `Successful` | sesiunea omului rămâne neatinsă (fără Kill Process după nume) |
 | E19 | Contract greșit | `SchemaVersion` = `"2"` / `Operation` = `"cancel"` / cheie lipsă | `Failed` | `UNSUPPORTED_SCHEMA_VERSION` / `UNSUPPORTED_OPERATION` / `MISSING_FIELD` |
 | E20 | Programare în trecut | `ScheduledAt` în trecut | `Failed` | `APPOINTMENT_IN_PAST` |
-| E21 | Item dublu | același `AppointmentId` trimis de două ori | al doilea nu intră în coadă | „Duplicate Reference” la `AddQueueItem` |
-| E22 | Procedură inexistentă în PixelData | item cu `ProductName` (sau `procedures` din mapări) care nu e în lista de proceduri din PixelData | `Failed`, excepție business, fără retry | `PROCEDURE_NOT_FOUND`; operatorul adaugă procedura în PixelData sau corectează maparea, apoi retrimite (U7, S8) |
-| E23 | Medic trimițător inexistent în PixelData | item cu `ReferringDoctorName` ne-gol care nu e în lista „Medic trimitator” | `Failed`, excepție business, fără retry | `REFERRING_DOCTOR_NOT_FOUND`; `ReferringDoctorName` gol nu e eroare; operatorul adaugă medicul în PixelData sau corectează numele în recepție, apoi retrimite (U7, S8) |
+| E21 | Item dublu | același `AppointmentId` trimis de două ori | al doilea nu intră în coadă | `AddQueueItem` răspunde cu `errorCode` `1016 DuplicateReference`; mesajul întors se compară cu cel citat în [06-setup-orchestrator.md](06-setup-orchestrator.md) §11 și orice diferență se corectează acolo |
+| E22 | Procedură inexistentă în PixelData | item cu `ProductName` (sau `procedures` din mapări) care nu e în lista de proceduri din PixelData | `Failed`, excepție business, fără retry | `PROCEDURE_NOT_FOUND`. Reluare: operatorul adaugă procedura în PixelData, apoi marchează itemul `Retried` (fără editare, datele sunt bune). Dacă în schimb corectează maparea `procedures`, publică maparea nouă și abia apoi marchează `Retried` |
+| E23 | Medic trimițător inexistent în PixelData | item cu `ReferringDoctorName` ne-gol care nu e în lista „Medic trimitator” | `Failed`, excepție business, fără retry | `REFERRING_DOCTOR_NOT_FOUND`; `ReferringDoctorName` gol nu e eroare. Reluare: dacă medicul se adaugă în PixelData, marcare `Retried`; dacă numele se corectează, Edit pe Specific Data și apoi `Retried`, sau ștergerea itemului și retrimiterea din recepție sub același Reference |
+| E24 | Reluarea unui item `Failed` | pe itemul de la E7 (`CNP_INVALID`): Edit pe Specific Data cu un CNP de test valid, apoi marcare `Retried` | item nou cu status `New`, preluat de trigger | se notează ce date poartă itemul nou (cele editate sau cele vechi), ce Reference are și în ce status rămâne părintele — răspunde întrebarea deschisă [11](11-intrebari-deschise.md) S8 |
+| E25 | Retrimitere după ștergere | pe itemul de la E9 (`SLOT_OCCUPIED`): se șterge itemul `Failed`, apoi se retrimite același `AppointmentId` cu `tools/queue-client` | itemul vechi rămâne vizibil cu status `Deleted`; cel nou intră în coadă, `New` | confirmă că `Deleted` eliberează Reference-ul; fără ștergere, aceeași comandă dă `1016 DuplicateReference` |
 
 ## 7. Checklist de acceptanță
 
@@ -179,7 +182,7 @@ Legendă status item (Orchestrator):
 - [ ] Nivel 3: `python3 contracts/validate_examples.py` raportează fiecare fișier cu rezultatul așteptat.
 - [ ] Nivel 4: fiecare pas din tabelul §4 a mers în Studio.
 - [ ] Nivel 5: programarea de test creată corect; Output corect; „Duplicate Reference” la retrimitere; `already_existed` fără dublură.
-- [ ] Nivel 6: fiecare rând E1–E23 rulat o dată, cu statusul și codul notate; un rând nerulat are motivul scris.
+- [ ] Nivel 6: fiecare rând E1–E25 rulat o dată, cu statusul și codul notate; un rând nerulat are motivul scris.
 - [ ] Nicio programare dublă în PixelData după testele E3 și E17.
 - [ ] Curățenia din §5 făcută.
 

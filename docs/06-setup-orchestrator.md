@@ -57,23 +57,25 @@ Harta resurselor din folderul `PixelData`:
 |---|---|---|
 | Contul tău (dezvoltator) | Folder Administrator (de verificat: numele exact al rolului) | Creezi și modifici coada, procesul, triggerul |
 | Robot account `robot-pixeldata` (§5) | Automation User | Poate rula procesul și citi coada și assetul |
-| External Application `ScanExpert-Receptie-Dispatcher` (§8) | Rol custom: Queues View + Transactions View + Transactions Create (de verificat: rolul minim) | Poate doar adăuga itemi și citi starea lor |
+| External Application `ScanExpert-Receptie-Dispatcher` (§8) | Rol custom: `Queues.View` + `Transactions.Create` + `Transactions.View` (minimul documentat, §8) | Poate doar adăuga itemi și citi starea lor |
+| Operatorul care rezolvă itemii `Failed` (§10) | În plus față de rolul lui: `Transactions.Edit` (marcare `Retried`) și `Transactions.Delete` (ștergerea unui item) | Recuperarea unui eșec Business |
 
 ## 2. Coada `PixelData_Programari`
 
 1. Folderul `PixelData` > **Queues** > **Add queue** (de verificat).
    - Nume: `PixelData_Programari`.
 2. **Enforce unique references** = ON.
-   - De ce: fiecare item are Reference `create-<AppointmentId>`. A doua trimitere a aceleiași programări este respinsă („Duplicate Reference”), deci robotul nu creează o programare dublă în PixelData.
-   - Atenție: setarea s-ar putea să nu mai poată fi schimbată după crearea cozii (de verificat). Bifeaz-o de la început.
+   - De ce: fiecare item are Reference `create-<AppointmentId>`. A doua trimitere a aceleiași programări este respinsă („Duplicate Reference”, `errorCode` `1016`), deci robotul nu creează o programare dublă în PixelData.
+   - Bifeaz-o de la început: documentația spune „This feature is enabled when creating the queue” ([about-queues-and-transactions](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions)); dacă se poate schimba și după, nu e documentat.
+   - Unicitatea „applies to all transactions except deleted or retried ones”: un item `Failed` blochează în continuare același Reference. Consecința pentru operator: §10, „Recuperarea unui item `Failed`”.
 3. **Auto retry** = ON, **Max # of retries** = `1`.
    - De ce: o eroare de sistem (PixelData blocat, timeout UI) primește încă o încercare. Erorile de business (date greșite) nu se reîncearcă, oricum.
-4. Opțional: încarcă schemele JSON la crearea cozii (de verificat: meniul exact și numele câmpurilor, de ex. „Specific Data JSON Schema” și „Output Data JSON Schema”).
-   - SpecificContent: [`contracts/appointment-queue-item.v1.schema.json`](../contracts/appointment-queue-item.v1.schema.json)
-   - Output: [`contracts/queue-item-output.v1.schema.json`](../contracts/queue-item-output.v1.schema.json)
-   - Contractele sunt JSON Schema 2020-12. Nu e confirmat că Orchestrator acceptă această versiune (de verificat). Dacă refuză fișierul, sari peste pas: validarea din robot rămâne.
-   - De ce: Orchestrator respinge din start un item care nu respectă contractul, înainte să ajungă la robot.
-   - Cost: la o versiune nouă a contractului trebuie reîncărcată și schema din coadă, altfel itemii noi sunt respinși.
+4. **Nu încărca schemele JSON în coadă** (hotărât 2026-09-11).
+   - Orchestrator validează datele itemului cu **JSON Schema draft-07** și acceptă doar un set închis de cuvinte-cheie: în rădăcină `type: "object"`, `properties`, `$schema`, `required`, `additionalProperties`, `$id`, `title`; pe fiecare proprietate `type`, `default`, `examples`, `pattern`, `minimum`, `maximum`, `minLength`, `maxLength`, `$id`, `title`. Tipuri permise pe proprietate: string, integer, boolean, number, object. Schema „must not contain an array”. Sursă: [about-queues-and-transactions, „Schema definitions”](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions#schema-definitions).
+   - Contractele noastre nu încap în setul acela. [`contracts/appointment-queue-item.v1.schema.json`](../contracts/appointment-queue-item.v1.schema.json) declară draft 2020-12 și folosește `$defs`, `$ref`, `allOf`, `enum`, `const` și `description`; [`contracts/queue-item-output.v1.schema.json`](../contracts/queue-item-output.v1.schema.json) folosește `enum`, `const` și `description`. Aproape toate regulile utile (listele închise `Payer` și `Laterality`, `Insurer` obligatoriu la `Asigurator privat`, formatele reutilizate) stau tocmai în cuvintele-cheie nesuportate.
+   - Nu e documentat dacă Orchestrator refuză fișierul sau ignoră tăcut un cuvânt-cheie nesuportat. Al doilea caz e mai rău decât lipsa validării: o coadă care pare validată și nu verifică nimic. De aceea nu se experimentează pe coada reală.
+   - Un item care nu respectă schema din coadă „fails with a Business Exception” — o excepție fără codurile noastre (§10), deci strict mai puțin utilă decât ce avem. Validarea rămâne unde e: regulile robotului (`MISSING_FIELD`, `INVALID_FIELD`, `CNP_INVALID`, …) și `python3 contracts/validate_examples.py` pentru exemple (docs/10 §3).
+   - De reținut, dacă decizia se redeschide: schema din coadă nu se aplică retroactiv itemilor existenți, iar la fiecare versiune nouă de contract trebuie reîncărcată, altfel itemii noi sunt respinși.
 5. Lasă celelalte setări implicite (fără SLA, fără Deadline).
    - De ce: deadline-ul schimbă doar prioritatea; regula „programarea e în trecut” o verifică robotul (`APPOINTMENT_IN_PAST`).
 
@@ -165,8 +167,10 @@ Faci pasul acesta când laptopul e gata ([07-setup-laptop.md](07-setup-laptop.md
    - Secretul se afișează o singură dată (de verificat).
    - Păstrează-l în password manager și, pentru teste, doar în `tools/queue-client/.env` (copie după `tools/queue-client/.env.example`, vezi §9). `.env` este ignorat de git (vezi `.gitignore`). Mai târziu, secretul se mută în hel, lângă celelalte secrete ale recepției.
    - De ce: e credențialul care poate introduce programări în coadă.
-4. Folderul `PixelData` > **Assign account/group** > caută `ScanExpert-Receptie-Dispatcher` > rol cu Queues View + Transactions View + Transactions Create (de verificat: rolul minim).
+4. Folderul `PixelData` > **Assign account/group** > caută `ScanExpert-Receptie-Dispatcher` > rol cu exact `Queues.View` + `Transactions.Create` + `Transactions.View`.
    - Dacă nu există un rol potrivit: Tenant > Manage Access > Roles > rol nou de folder cu doar aceste permisiuni (de verificat: calea exactă).
+   - De ce atât: AddQueueItem cere `Queues.View` + `Transactions.Create`, iar GetQueueItems (reconcilierea și `queue-client status`) cere `Queues.View` + `Transactions.View`. Sursă: [permissions-per-endpoint](https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/permissions-per-endpoint).
+   - Nu-i da `Transactions.Delete` sau `Transactions.Edit`: sunt permisiunile de recuperare din §10 și aparțin operatorului uman, nu unui credențial care stă într-un server.
    - De ce: scope-ul `OR.Queues` spune ce API poate apela aplicația; rolul din folder spune pe ce coadă are voie.
 5. Cine folosește aplicația:
    - Acum: `tools/queue-client`, pentru teste manuale (§9).
@@ -203,7 +207,7 @@ Atenție: testul creează o programare **reală** în PixelData. Folosește un p
    ```
    - Rezultat așteptat: afișează `Id` și Reference `create-<AppointmentId>`, cod de ieșire `0`.
    - Cod de ieșire `1` = eroare API sau rețea. Cod `2` = configurare, argumente sau fișier greșit; mesajul numește variabila lipsă.
-   - La cod `1`, reia comanda cu `-debug` (§11): afișează în plus răspunsul complet al Orchestrator, care spune de ce a refuzat itemul. Răspunsul citează itemul înapoi, deci poate conține date de pacient (nume, CNP, telefon): citește-l în terminal și nu-l lipi în ticket, în chat sau în log.
+   - La cod `1`, reia comanda cu `-debug` (§11): afișează în plus răspunsul complet al Orchestrator, care spune de ce a refuzat itemul. Codurile `errorCode` uzuale la configurare greșită (coadă, folder, header): §11. Răspunsul citează itemul înapoi, deci poate conține date de pacient (nume, CNP, telefon): citește-l în terminal și nu-l lipi în ticket, în chat sau în log.
 4. Orchestrator > folderul `PixelData` > **Queues** > `PixelData_Programari` > **View Transactions** (de verificat).
    - Itemul apare cu Reference `create-<AppointmentId>` și Status `New`.
 5. Orchestrator > folderul `PixelData` > **Jobs** (de verificat: calea exactă).
@@ -222,7 +226,7 @@ Atenție: testul creează o programare **reală** în PixelData. Folosește un p
 8. Deschide PixelData > **PROGRAMĂRI**: programarea apare la data, ora și resursa din item.
    - De ce: `Successful` în Orchestrator spune doar că robotul a terminat fără excepție; ecranul PixelData confirmă salvarea.
 9. Test de duplicat: rulează din nou aceeași comandă `enqueue`.
-   - Rezultat așteptat: `queue-client` afișează „already queued” și iese cu `0`. Orchestrator a respins Reference-ul duplicat (răspunsul HTTP exact: de verificat). Niciun item nou, niciun job nou.
+   - Rezultat așteptat: `queue-client` afișează „already queued” și iese cu `0`. Orchestrator a respins Reference-ul duplicat cu `errorCode` `1016 DuplicateReference` (codul HTTP: de verificat, §11). Niciun item nou, niciun job nou.
    - De ce: confirmă că setarea Enforce unique references (§2) este activă.
 10. Curățenie: șterge programarea de test din PixelData (și pacientul de test, dacă a fost creat și ai voie).
     - De ce: programarea de test ocupă un slot real.
@@ -247,20 +251,43 @@ Ce înseamnă stările unui item:
 | `Successful` | Programarea e în PixelData. Output `Outcome`: `created` (creată acum) sau `already_existed` (exista deja) | Nimic |
 | `Failed` | Robotul a aruncat excepție. Business (date greșite): fără retry. Application (sistem): retry automat, dacă mai are încercări | Citește codul din `ProcessingException` |
 | `Abandoned` | A stat `InProgress` 24 de ore fără final (laptop căzut sau oprit în timpul jobului) | Verifică în PixelData dacă programarea există. Auto retry îl reia; robotul verifică întâi „există deja?” |
-| `Retried` | Această încercare a eșuat și s-a creat o copie nouă, cu același Reference | Uită-te la itemul cu același Reference și Id-ul cel mai mare |
+| `Retried` | S-a creat un item nou, cu status `New`. Fie automat (Auto retry după o excepție system; copia păstrează Reference-ul), fie manual: „the item has been marked manually for retry” | Uită-te la itemul nou. La retry automat e cel cu același Reference și Id-ul cel mai mare; ce Reference primește itemul creat de un retry manual: de verificat |
+| `Deleted` | Cineva a șters itemul. Ștergerea e permisă „no matter their status”, iar itemul rămâne vizibil în listă | Nimic. Reference-ul lui e liber: se poate trimite din nou aceeași programare |
+| `Verified` | Cineva a marcat itemul ca verificat. Stare fără întoarcere: „Items cannot be retried after the user sets this status” | Dacă mai trebuie reluat, singura cale rămasă e ștergerea itemului și retrimiterea |
 
 Unde vezi codul de eroare:
 - Orchestrator: coada `PixelData_Programari` > View Transactions > click pe item > detaliile excepției: tip (Business/Application) și Reason (de verificat: etichetele).
-- API: câmpul `ProcessingException` din răspunsul QueueItems (§11). `./queue-client status -reference create-<AppointmentId>` îl afișează (Type, Reason, Details).
+- API: câmpul `ProcessingException` din răspunsul QueueItems (§11). `./queue-client status -reference create-<AppointmentId>` îl afișează (Type, Reason, Details). Trimite mereu headerul de folder: „QueueItems endpoints count and return the DTO for every recurrence of a queue item in all the folders the queue is linked to” (docs.uipath.com, ghidul de API Orchestrator; pagina exactă de verificat), deci o căutare după Reference fără `X-UIPATH-FolderPath` întoarce câte un rând pentru fiecare folder în care e legată coada, iar „Id-ul cel mai mare” nu mai înseamnă nimic. `queue-client` îl trimite (§11).
 - Mesajul începe mereu cu codul, de ex. `CNP_INVALID: <mesaj>`.
 - Pentru excepțiile Application, pe laptop există și o captură de ecran în `Exceptions_Screenshots` ([07-setup-laptop.md](07-setup-laptop.md) §10).
 
 | Tip | Coduri | Ce faci |
 |---|---|---|
-| Business (datele) | `MISSING_FIELD`, `INVALID_FIELD`, `UNSUPPORTED_SCHEMA_VERSION`, `UNSUPPORTED_OPERATION`, `CNP_REQUIRED`, `CNP_INVALID`, `APPOINTMENT_IN_PAST`, `RESOURCE_MAPPING_MISSING`, `PATIENT_SOURCE_MAPPING_MISSING`, `PATIENT_AMBIGUOUS`, `SLOT_OCCUPIED`, `PIXELDATA_CNP_REJECTED` | Corectează datele (în recepție sau în fișierul de mapări), apoi introdu programarea manual. Nu e confirmat că Orchestrator acceptă un item nou cu același Reference după un `Failed` (de verificat). |
-| System (mediul) | `PIXELDATA_UNAVAILABLE`, `PIXELDATA_LOGIN_FAILED`, `PIXELDATA_UI_TIMEOUT`, `PIXELDATA_SAVE_UNCONFIRMED` | Verifică laptopul și PixelData ([07-setup-laptop.md](07-setup-laptop.md) §11). La `PIXELDATA_SAVE_UNCONFIRMED` verifică în PixelData dacă programarea s-a salvat. Retry manual din Orchestrator, dacă butonul există (de verificat). |
+| Business (datele) | `MISSING_FIELD`, `INVALID_FIELD`, `UNSUPPORTED_SCHEMA_VERSION`, `UNSUPPORTED_OPERATION`, `CNP_REQUIRED`, `CNP_INVALID`, `APPOINTMENT_IN_PAST`, `RESOURCE_MAPPING_MISSING`, `PATIENT_SOURCE_MAPPING_MISSING`, `PATIENT_AMBIGUOUS`, `SLOT_OCCUPIED`, `PIXELDATA_CNP_REJECTED` | Corectează datele (în recepție sau în fișierul de mapări), apoi reia itemul după procedura de mai jos. |
+| System (mediul) | `PIXELDATA_UNAVAILABLE`, `PIXELDATA_LOGIN_FAILED`, `PIXELDATA_UI_TIMEOUT`, `PIXELDATA_SAVE_UNCONFIRMED` | Verifică laptopul și PixelData ([07-setup-laptop.md](07-setup-laptop.md) §11). La `PIXELDATA_SAVE_UNCONFIRMED` verifică în PixelData dacă programarea s-a salvat. Apoi retry manual, la fel ca mai jos (marcare `Retried`, fără editare). |
 
 Lista completă și regulile: [decizii-design-v1.md](sources/decizii-design-v1.md), secțiunea „Coduri de eroare inițiale”.
+
+**Recuperarea unui item `Failed`**
+
+Un item `Failed` NU eliberează Reference-ul: unicitatea „applies to all transactions except deleted or retried ones”, iar un `AddQueueItem` cu același Reference primește tot `1016 DuplicateReference`. Deci nu retrimite din recepție înainte de a face unul din cei doi pași de mai jos.
+
+Varianta 1 — datele se pot corecta chiar în item (mapare greșită, o valoare greșită în `SpecificContent`):
+1. Coada `PixelData_Programari` > View Transactions > itemul `Failed` > **Edit** (disponibil pe itemi `New`, `Failed` și `Abandoned`; Clone merge și pe `Successful`).
+2. Specific Data se editează prin descărcarea fișierului JSON, modificare, apoi încărcare. Nu poate conține tablouri; contractul nostru are oricum chei plate, deci nu e o problemă ([03-contract-coada.md](03-contract-coada.md) §2).
+3. Marchează itemul **Retried**. Orchestrator creează un item nou, cu status `New`, iar triggerul îl ia în lucru.
+4. Cere `Transactions.Edit` în folder (§1).
+
+Varianta 2 — itemul nu se mai poate relua (e deja `Verified`) sau corectura s-a făcut în recepție, nu în item:
+1. Șterge itemul `Failed` (ștergerea e permisă indiferent de status; itemul rămâne vizibil, marcat `Deleted`, și nu mai blochează Reference-ul).
+2. Retrimite programarea sub același Reference `create-<AppointmentId>` — din recepție în faza 3, sau cu `./queue-client enqueue` acum.
+3. Cere `Transactions.Delete` în folder (§1).
+
+Nu inventa un Reference nou (`create-<AppointmentId>-r2` sau altceva): Reference-ul e cheia de idempotență a programării, iar cu sufix o trimitere accidentală nu ar mai fi respinsă de coadă. Vezi [05-integrare-receptie.md](05-integrare-receptie.md) §6.
+
+De verificat la prima recuperare reală (întrebare pentru suportul UiPath, [11](11-intrebari-deschise.md) S8): dacă itemul creat de Retry poartă datele editate sau pe cele vechi, ce Reference primește și în ce status rămâne părintele.
+
+Surse: [about-queues-and-transactions](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions), [queue-item-statuses](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/queue-item-statuses), [editing-transactions](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/editing-transactions).
 
 ## 11. Referință API
 
@@ -288,17 +315,31 @@ Ambele comenzi, `enqueue` și `status`, acceptă `-debug`: pe lângă mesajul ob
 | Bază Orchestrator (`{base}`) | `https://cloud.uipath.com/{org}/{tenant}/orchestrator_` |
 | Adăugare item | `POST {base}/odata/Queues/UiPathODataSvc.AddQueueItem` |
 | Body adăugare | `{"itemData":{"Name":"PixelData_Programari","Priority":"Normal","Reference":"create-<AppointmentId>","SpecificContent":{...}}}` |
-| Răspuns adăugare | `201` + itemul (Status `New`). Reference duplicat: respins, „Duplicate Reference” (codul HTTP: de verificat) |
+| Răspuns adăugare | `201` + itemul (Status `New`). Reference duplicat: respins cu `errorCode` `1016 DuplicateReference` (mesajul exact: tabelul de coduri de mai jos); codul HTTP nu e documentat oficial (o sursă de forum spune `409`) — de verificat |
 | Stare item | `GET {base}/odata/QueueItems?$filter=Reference eq 'create-<AppointmentId>'&$orderby=Id desc&$top=1` |
 | Câmpuri utile | `Status`, `Output`, `ProcessingException`. Contează itemul cu cel mai mare `Id` (retry-urile păstrează Reference) |
 | Headere | `Authorization: Bearer <token>`, `Content-Type: application/json` |
 | Header folder (unul din două) | `X-UIPATH-FolderPath: PixelData` sau `X-UIPATH-OrganizationUnitId: <folder-id>` |
 | Scope | `OR.Queues` (de verificat: dacă ajunge și pentru citirea QueueItems fără alt scope) |
-| Limite | Reference: maximum 128 caractere, fără apostrof (sursă terță, de verificat). SpecificContent: maximum circa 256.000 caractere |
+| Limite | Reference: cele 128 de caractere și interdicția apostrofului sunt documentate pentru **expresia de filtrare**, nu pentru câmpul stocat ([get-queue-items](https://docs.uipath.com/activities/other/latest/workflow/get-queue-items)); o sursă de forum spune că și câmpul refuză peste 128 (de verificat). Al nostru are 43. SpecificContent: maximum „256,000 characters or 512,000 bytes” ([about-queues-and-transactions](https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions#schema-definitions)) |
 
 Note:
 - `X-UIPATH-FolderPath` nu cere ID-ul folderului. ID-ul numeric pentru `X-UIPATH-OrganizationUnitId` apare în URL-ul Orchestrator când deschizi folderul (de verificat: parametrul exact).
+- Headerul de folder nu e opțional nici la citire: fără el, endpointurile QueueItems întorc itemul o dată pentru fiecare folder în care e legată coada (§10).
+- Permisiuni per endpoint: AddQueueItem = `Queues.View` + `Transactions.Create`; GetQueueItems = `Queues.View` + `Transactions.View`; DeleteQueueItems / DeleteBulk = `Queues.View` + `Transactions.Delete`; SetItemReviewStatus (marcarea `Retried`) = `Queues.View` + `Transactions.Edit` ([permissions-per-endpoint](https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/permissions-per-endpoint)).
 - În `curl`, spațiile și apostrofurile din `$filter` trebuie codate în URL (`%20`, `%27`).
+
+Coduri de eroare Orchestrator, din câmpul `errorCode` al răspunsului ([response-codes](https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/response-codes)). Sunt cele care apar la configurare greșită; le vezi cu `-debug`:
+
+| `errorCode` | Documentat ca | La noi înseamnă |
+|---|---|---|
+| `1016 DuplicateReference` | „Error creating [ReferenceName]. Duplicate Reference.” | Programarea e deja în coadă. Emitentul o tratează ca trimisă; dacă itemul vechi e `Failed`, vezi §10 |
+| `1002 ItemNotFound` | resursa nu există (pagina numește explicit cozile și itemii de coadă) | `UIPATH_QUEUE_NAME` greșit, sau coada nu există în folderul cerut |
+| `1100 InvalidOrganizationUnit` | apelantul e asociat cu alt folder decât cel accesat | folder greșit în `X-UIPATH-FolderPath` / `X-UIPATH-OrganizationUnitId` |
+| `1101 RequiredOrganizationUnit` | POST fără parametrul de folder | headerul de folder lipsește cu totul |
+| `1850 TransactionReferenceRequired` | `Reference` lipsă pe o coadă cu unicitate impusă | emitentul a trimis un item fără `Reference`; la noi e mereu `create-<AppointmentId>` |
+
+Două lucruri NU sunt documentate, ca să nu le cauți: nu există un cod de eroare pentru „apelantul nu are drepturi în acest folder” (surse de forum spun un `403` simplu, neverificat), iar forma corpului de eroare nu e documentată deloc — niciun exemplu JSON, niciun nume de câmp. `1017 ForbiddenOperation` și `1102 OrganizationUnitNotEditable` sună potrivit, dar sunt documentate pe endpointuri fără legătură cu cozile.
 
 Surse UiPath:
 - https://docs.uipath.com/automation-cloud/automation-cloud/latest/api-guide/accessing-uipath-resources-using-external-applications
@@ -306,6 +347,11 @@ Surse UiPath:
 - https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/building-api-requests
 - https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/managing-queues-in-orchestrator
 - https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/queue-triggers
+- https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/about-queues-and-transactions (unicitatea Reference-ului, schemele cozii, limita SpecificContent)
+- https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/queue-item-statuses (statusuri, ștergere, `Retried`, `Verified`)
+- https://docs.uipath.com/orchestrator/automation-cloud/latest/user-guide/editing-transactions (Edit și Clone pe un item)
+- https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/response-codes (codurile `errorCode`: 1016, 1002, 1100, 1101, 1850)
+- https://docs.uipath.com/orchestrator/automation-cloud/latest/api-guide/permissions-per-endpoint (permisiunile minime per endpoint)
 
 ## 12. Checklist final
 
@@ -314,9 +360,9 @@ Acum (fără laptop):
 - [ ] Știu că trialul expiră la 2026-11-09 și nu e pentru producție
 - [ ] Folderul `PixelData` există, cu rolurile din §1
 - [ ] Coada `PixelData_Programari`: Enforce unique references = ON, Auto retry = ON, Max # of retries = 1
-- [ ] (Opțional) schemele SpecificContent și Output încărcate în coadă, sau notat că Orchestrator nu le acceptă
+- [ ] Schemele JSON NU sunt încărcate în coadă (§2 pas 4); validarea rămâne în robot
 - [ ] Assetul Credential `PixelData_RobotLogin` există, cu userul PixelData al robotului
-- [ ] External Application `ScanExpert-Receptie-Dispatcher`: Confidential, doar `OR.Queues`, adăugată în folder cu rolul minim
+- [ ] External Application `ScanExpert-Receptie-Dispatcher`: Confidential, doar `OR.Queues`, adăugată în folder cu exact `Queues.View` + `Transactions.Create` + `Transactions.View`
 - [ ] Secretul aplicației externe e în password manager și în `tools/queue-client/.env`, nicăieri altundeva
 
 După laptop:
