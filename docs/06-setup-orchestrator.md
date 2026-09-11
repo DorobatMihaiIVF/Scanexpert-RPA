@@ -203,6 +203,7 @@ Atenție: testul creează o programare **reală** în PixelData. Folosește un p
    ```
    - Rezultat așteptat: afișează `Id` și Reference `create-<AppointmentId>`, cod de ieșire `0`.
    - Cod de ieșire `1` = eroare API sau rețea. Cod `2` = configurare, argumente sau fișier greșit; mesajul numește variabila lipsă.
+   - La cod `1`, reia comanda cu `-debug` (§11): afișează în plus răspunsul complet al Orchestrator, care spune de ce a refuzat itemul. Răspunsul citează itemul înapoi, deci poate conține date de pacient (nume, CNP, telefon): citește-l în terminal și nu-l lipi în ticket, în chat sau în log.
 4. Orchestrator > folderul `PixelData` > **Queues** > `PixelData_Programari` > **View Transactions** (de verificat).
    - Itemul apare cu Reference `create-<AppointmentId>` și Status `New`.
 5. Orchestrator > folderul `PixelData` > **Jobs** (de verificat: calea exactă).
@@ -276,6 +277,8 @@ Variabilele de mediu `tools/queue-client`. Toate sunt obligatorii, fără valori
 | `UIPATH_QUEUE_NAME` | `PixelData_Programari` | `Name` din body-ul AddQueueItem |
 
 Scope-ul nu e variabilă: `queue-client` cere mereu `OR.Queues`.
+
+Ambele comenzi, `enqueue` și `status`, acceptă `-debug`: pe lângă mesajul obișnuit de eroare (care numește doar operația și codul HTTP) afișează și corpul răspunsului de eroare al Orchestrator. Este oprit implicit pentru că acel corp citează itemul înapoi, cu date de pacient în el (nume, CNP, telefon); pornește-l doar cât depanezi și nu-l lipi în ticket, în chat sau în log.
 
 | Ce | Valoare |
 |---|---|
